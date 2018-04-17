@@ -61,7 +61,8 @@ def makeRNN(num_layers,
             recurrent_initializer,
             kernel_initializer,
             visible,
-            unit_forget_bias):
+            unit_forget_bias,
+            batch_size):
     if debug :
         print("making RNN")
     '''
@@ -85,7 +86,8 @@ def makeRNN(num_layers,
                        kernel_initializer = kernel_initializer,
                        recurrent_initializer = recurrent_initializer,
                        lstm_flag = lstm_flag,
-                       visible = visible)
+                       visible = visible,
+                       batch_size = batch_size)
     class1 = LSTM(num_targets,activation=None)(visible) if lstm_flag else GRU(num_targets,activation=None)(visible)
     output = Dense(num_targets, activation='linear')(class1)
     return output
@@ -104,7 +106,8 @@ def cell(layer,
          recurrent_initializer,
          lstm_flag,
          visible,
-         return_sequences=True):
+         batch_size,
+         return_sequences=True,):
     if lstm_flag:
         return LSTM(units = layer,
                     activation = activation, 
@@ -113,16 +116,17 @@ def cell(layer,
                     return_sequences = return_sequences, 
                     unit_forget_bias = unit_forget_bias,
                     kernel_initializer = kernel_initializer,
-                    recurrent_initializer = recurrent_initializer)(visible)
+                    recurrent_initializer = recurrent_initializer,
+                    batch_size = batch_size)(visible)
     else :
-        return GRU(layer,
-                   activation, 
-                   dropout,
-                   recurrent_dropout,
-                   return_sequences, 
-                   kernel_initializer,
-                   recurrent_initializer,
-                   lstm_flag)(visible)
+        return GRU(units = layer,
+                   activation =activation, 
+                   dropout = dropout,
+                   recurrent_dropout = recurrent_dropout,
+                   return_sequences = True, 
+                   kernel_initializer = kernel_initializer,
+                   recurrent_initializer = recurrent_initializer,
+                   batch_size = batch_size)(visible)
     
 ###########################################################################
 # Preprocesses an input file containing sensor data.                      #
@@ -197,16 +201,21 @@ def collect_data(fiels,debug):
         np.savetxt('Data/Processed/' + relative_path, processed_data, delimiter=',', fmt = '%f')
 
     if debug : print("data[0:10]: \n{}".format(data[0:10]))
+
+    diff = targets[1:]-targets[:-1]
+    '''
     temp = list()
     for i in range(1,targets.shape[0]):
         #temp = targets[i]-targets[i-1]
         temp.append(targets[i]-targets[i-1])
     
     acceleration_targets = np.array(temp)
+    '''
     data = data.reshape((data.shape[0],1,data.shape[1]))[1:]
     if debug : print("data[0:10]: \n{}".format(data[0:10]))
     
-    return data,acceleration_targets
+    #return data,acceleration_targets
+    return data,diff
 
 if __name__=="__main__":
 
@@ -214,7 +223,7 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description = "LSTM.py",
         epilog = "Use this program to train some LSTMs.",
         add_help = "How to use",
-        prog = "python LSTM.py -l <layers> -d <dropouts> -a <activation> [OPTIONAL PARAMETERS]")
+        prog = "python LSTM.py -l <layers> -d <dropouts> -v <activation> -r <recurrent_dropours> -f <files> [OPTIONAL PARAMETERS]")
 
     parser.add_argument("-l", "--layers", nargs = "*", type = int, required = True,
         help = "The number of units to use in each layer. A list of ints.")
@@ -227,11 +236,17 @@ if __name__=="__main__":
 
     parser.add_argument("-r", "--recurrent_dropouts", nargs = "*", required = True , type = float,
         help = "The recurrent dropout values for each layer. A list of floats.")
-
+    
     parser.add_argument("-f", "--files", nargs = "*", required = True ,
         help = "A list of input files. NOTE: A path with path expansion a la \'\\*\' is acceptable. ")
-        
+
+    parser.add_argument("-i", "--time_steps", type=int, default = 300,
+        help = "The number of time steps to use in the TBPTT algorithm. DEFAULT: 300")
+    
     parser.add_argument("-e", "--epochs", type = int, default = 10,
+        help = "The number of training epochs.")
+
+    parser.add_argument("-b", "--batch_size", type = int, default = 10,
         help = "The number of training epochs.")
     
     parser.add_argument("-g", "--GRU", action = "store_false",
@@ -246,15 +261,12 @@ if __name__=="__main__":
     parser.add_argument("-u", "--unit_forget_bias", action = "store_false",
         help = "A flag to use a unit_forget_bias initialization. DEFAULT: True")
 
-    parser.add_argument("-b", "--batch_size", default = 10,
-        help = "The training batch size. DEFAULT: 10")
-
     parser.add_argument("-s", "--standard_scalar", action = 'store_false', 
         help = "The flag for whether to use a standard scalar or min-max scalar. DEFAULT: False, i.e. - use a min-max. ")
 
     parser.add_argument("-a", "--num_attributes", type = int, default = 6,
         help = "The number of attributes used to train the model. DEFAULT: 6")
-
+        
     parser.add_argument("-t", "--num_targets", type = int, default = 3,
         help = "The number of target values the model will predict.")
     
@@ -268,7 +280,7 @@ if __name__=="__main__":
     activations             = args['activations']
     recurrent_dropouts      = args['recurrent_dropouts']
     epochs                  = args['epochs']
-    batch_size              = args['batch_size']
+    time_steps              = args['time_steps']
     unit_forget_bias        = args['unit_forget_bias']
     kernel_initializer_bias = args['kernel_initializer_bias']
     recurrent_initializer   = args['recurrent_initializer']
@@ -278,6 +290,7 @@ if __name__=="__main__":
     num_targets             = args['num_targets']
     debug                   = args['debug']
     files                   = args['files']
+    batch_size              = args['batch_size']
 
     num_layers = len(layers)
     
@@ -313,6 +326,7 @@ if __name__=="__main__":
                      recurrent_initializer = recurrent_initializer,
                      unit_forget_bias      = unit_forget_bias,
                      kernel_initializer    = kernel_initializer_bias,
+                     batch_size            = batch_size,
                      visible               = visible)
             
     model = Model(inputs=visible, outputs=output)
