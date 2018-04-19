@@ -142,112 +142,27 @@ def makeRNN(num_attributes,
                     activation = 'linear'))
     return model
 
-
-
-
-###########################################################################
-# Preprocesses an input file containing sensor data.                      #
-# Parameters:                                                             #
-#     filename : a file with some data that we want to pre-process.       #
-#     scaler : an object that inherits from the sklearn classes           #
-#              BaseEstimator and TransformerMixin, i.e. - an object of    #
-#              type StandardScaler or MinMaxScaler                        #
-#                                                                         #
-# NOTE: NOT REALLY USING THIS FUNCTION ANY MORE.                          #
-###########################################################################
-
-def preprocessing(filename,scaler):
-    
-    d = pd.read_csv(filename)
-    
-    #drop the first column -- sensor type
-    d_drop = d.drop("Sensor type", axis=1)   
-
-    if debug:
-        print("Original \n{}".format(d))
-        print ("Dropped Sensor Type \n{}".format(d_drop))
-        
-    d_matrix = d_drop.as_matrix()   # Using pandas again to convert the revised table into a matrix
-    n_array = np.array(d_matrix) # now we use numpy to convert the pandas matrix into a Numpy array
-
-    #WHY ARE WE DELING THE LAST ROW? 
-    #We need an even number of rows of data.
-    #So delete the last row if the revised row number is odd, otherwise cut last two rows
-    n_array = n_array[:-1] if len(n_array) % 2 == 1 else n_array[:-2] 
-
-    #Concatenate the EMG and Accerlaration rows for (nearly) the same time moments
-    n_conc = np.concatenate((n_array[::2], n_array[1::2]), axis = 1)    
-
-    #delete the second and third columns of each list in the matrix
-    n_del = np.delete(n_conc, [1, 2], axis = 1)
-    #Normalize the data using the supplied scaler
-    n_del = scaler.fit(n_del).transform(n_del)
-
-    #target for data t is [x,y,z] of t+1
-    targets = n_del[1:, 2:5] - n_del[:-1,2:5]
-
-    # no target for last example, so drop it.
-    data = n_del[:-1] 
-    
-    if debug:
-        print ("Delete odd rows \n{}".format(n_array[:16,:]))
-        print ("Concatenated array \n{}".format(n_conc[:16,:]))
-        print ("Delete Zero rows \n{}".format(n_del[:16,:]))
-        print("n_del.shape: {}".format(n_del.shape))
-        print("data.shape: {}".format(data.shape))
-        
-    return data, targets
-
-###########################################################################
-# Preprocess and collect a collection of files into a single file.        #
-# Data coming in will have 2D shape.                                      #
-# Data going out will have 3D shape: (samples,time_steps,features)        #
-# Parameters:                                                             #
-#     files : a list of files that we want to collect.                    #                                        
-###########################################################################
-
-def collect_data(files,debug):
-    
-    data    = np.empty((0,num_attributes)) #initializing empty array with proper shape
-    targets = np.empty((0,num_targets   )) #empty array for targets
-    batches = np.array([])
-    
-    for f in files:
-        #preprocess this timeseries sample
-        relative_path = f[f.rfind('/')+1:]
-        processed_data, processed_targets = preprocessing(f,scaler)
-        batch = processed_data.shape[0]
-        #append this timeseries to the dataset
-        data    = np.append(data, processed_data, axis=0)
-        targets = np.append(targets, processed_targets, axis=0)
-        batches = np.append(batches,[batch])
-        np.savetxt('Data/Processed/' + relative_path, processed_data, delimiter=',', fmt = '%f')
-
-    if debug : print("data[0:10]: \n{}".format(data[0:10]))
-
-
-    '''
-    targets = targets[1:,:]-targets[:-1,:]
-    temp = list()
-    for i in range(1,targets.shape[0]):
-        #temp = targets[i]-targets[i-1]
-        temp.append(targets[i]-targets[i-1])
-    
-    acceleration_targets = np.array(temp)
-    '''
-    if debug :
-        print("data[0:10]: \n{}".format(data[0:10]))
-        print("\n\n\n\n************************\ndata.shape: {}".format(data.shape))
-    
-    #return data,acceleration_targets
-    return data,targets,batches
-
+######################################################################################
+# Split the data into testing and validation sets, making sure to return an even     #
+# number of batches in the result.                                                   #
+# Parameters:                                                                        #
+#     X          : the feature data                                                  #
+#     y          : the target data                                                   #
+#     batch_size : the batch size                                                    #
+######################################################################################
 
 def testTrainSplit(X,y,batch_size):
     X = X[0:int(np.floor(data.shape[0]/batch_size))*batch_size]
     y = y[0:int(np.floor(data.shape[0]/batch_size))*batch_size]
     l = int(np.floor(X.shape[0] * (2/3)))
     return X[:l,:],y[:l,:],X[l:,:],y[l:,:]
+
+######################################################################################
+# Get the data out of the files and in a nice format.                                #
+# Parameters:                                                                        #
+#     files : a list of files with the data in it                                    #
+#     debug : a debug flag.                                                          #
+######################################################################################
 
 def getData(files,debug):
     
@@ -256,11 +171,17 @@ def getData(files,debug):
     batches = np.array([])
     
     for f in files:
-        #preprocess this timeseries sample
+        #grab the relative pathname and we can save the data for later.
         relative_path = f[f.rfind('/')+1:]
         
         full_data = np.loadtxt(f,delimiter = ',')
 
+        ###########################################################
+        # The first three columns are targets, the rest features, #
+        # and we're predicting the difference in each feature     #
+        # from one time point to the next.                        #
+        ###########################################################
+        
         processed_data    = full_data[:-1,3:]
         processed_targets = full_data[1:,:3]-full_data[:-1,:3]
 
@@ -271,7 +192,6 @@ def getData(files,debug):
             print("processed_data.shape: {}".format(processed_data.shape))
             print("processed_target.shape: {}".format(processed_targets.shape))
                   
-        #append this timeseries to the dataset
         data    = np.append(data, processed_data, axis=0)
         targets = np.append(targets, processed_targets, axis=0)
         batches = np.append(batches,[batch])
@@ -367,31 +287,13 @@ if __name__=="__main__":
     if quiet :
         print("working in quiet TF mode.")
         tf.logging.set_verbosity(tf.logging.ERROR)
+
     scaler = StandardScaler() if standard_scaler else MinMaxScaler()
     
-    #collecting all the data and preprocess it
-    #remember: data has shape (num_series,time_steps^*,
     print("Collecting and pre-processing data...")
-    data,targets,batches = getData(files,debug)
+    data,targets,samples = getData(files,debug)
     print("Done.")
-    
-    '''
-    *******************WHAT IS THIS FOR???***********************
-    input_data = list()
-    for i in range(0,data.shape[0]):
-        input_data.append([data[i]])
-    input_data = np.array(data)
-    '''
-    '''
-    **************WE WILL DO THIS LATER INSTEAD******************
-    print("Splitting the data into training and validation sets.")
-    X_train, y_train, X_test, y_test = data[0:40000],targets[0:40000],data[40000:],targets[40000:]
-    print("Done.")
-    '''
-    
     print("Specifying the model...")
-    #https://machinelearningmastery.com/keras-functional-api-deep-learning/
-    #visible = Input(shape = (1,num_attributes))
 
     model = makeRNN(num_attributes        = num_attributes,
                     num_targets           = num_targets,
@@ -405,51 +307,70 @@ if __name__=="__main__":
                     batch_size            = batch_size)
     
     print("Done.")
-    # summarize layers
     print(model.summary())
-    #sgd= SGD(lr=0.0001, momentum=0.0, decay=0.0, nesterov=False)
+    
     model.compile(loss='mean_squared_error',optimizer="adam",metrics=["mae"])
 
-    #We have to train by hand, resetting our state as needed...
-    #j allows us to aggregate the "batch_sizes" as we go
+    #########################################################################
+    # Training by hand is a little ugly.                                    #
+    # We run each epoch separately, and inside of it we'll run the data     #
+    # through the model on a forward pass in batches.                       #
+    # We'll reset the state of the net on each new sample.                  #
+    #########################################################################
     
     for epoch in range(epochs):
-        j=0
+        #j is going to allow us to distinguish each sample from the last
+        j = 0
+        
         print("training epoch {}...".format(epoch))
+
         tr_mse = 0
         tr_mae = 0
-
+        
         te_mse = 0
         te_mae = 0
 
-        #each batch_size informs us where to look for a single time series
-        for data_size in batches:
+        #samples is a list of the lengths of each of our samples
+        for sample_size in samples:
 
+            print("training on a new sample...")
+            
             if debug :
-                print("data_size".format(data_size))
-
-            #X will have shape (data_size,num_features)
-            #y will have shape (data_size,num_targets)
-            X = data[j:j+int(data_size),:]
-            y = targets[j:j+int(data_size),:]
+                print("samle_size:".format(sample_size))
+                
+            #X will have shape (sample_size,num_features)
+            #y will have shape (samlpe_size,num_targets)
+            X = data[j:j+int(sample_size),:]
+            y = targets[j:j+int(sample_size),:]
 
             if debug :
                 print("X.shape: {}".format(X.shape))
                 print("y.shape: {}".format(y.shape))
-                #aggregate the batch size
-            j+= int(data_size)
+
+            #aggregate the sample indicator
+            j += int(sample_size)
 
             #testTrainSplit should return data with an even number of batches in it. 
             X_train, y_train, X_test, y_test = testTrainSplit(X,y,batch_size)
+
             x_tr_m,x_tr_n = X_train.shape
             y_tr_m,y_tr_n = y_train.shape
             x_te_m,x_te_n = X_test.shape
             y_te_m,y_te_n = y_test.shape
-            
+
+            #k let's us print out a progress bar. May not need it.
             k = 1
-            #now we train the model on this batch, one at a time...
-            print("training on a new sample...")
+
+            ###################################################################
+            # now we train the model on this sample, one batch at a time...   #
+            # x_tr_m/batch_size gives us the number of batches in this sample #
+            ###################################################################
             for i in range(int(x_tr_m/batch_size)):
+
+                ################################################################
+                # We have to reshape the data to [batch_size,1,num_attributes] #
+                # and the targets to [batch_size,1,num_targets]                #
+                ################################################################
                 X_tr_batch = X_train[i*batch_size:(i+1)*batch_size].reshape(batch_size,1,x_tr_n)
                 y_tr_batch = y_train[i*batch_size:(i+1)*batch_size].reshape(batch_size,y_tr_n)
                 
@@ -465,19 +386,44 @@ if __name__=="__main__":
                     print("-"*k +">",end="\r")
                     k += 1
             print("\n")
-            model.reset_states()
-            k=1
-            print("testing on new sample...")
 
+            ##################################################
+            # Make sure to reset the state after each sample #
+            ##################################################
+            
+            model.reset_states()
+
+            #Rese k for an accurate progress bar. 
+            k=1
+
+            print("testing on new sample...")
+            
+            ###################################################################
+            # now we test the model on this sample, one batch at a time...    #
+            # x_te_m/batch_size gives us the number of batches in this sample #
+            ###################################################################
             for i in range(int(np.floor(x_tr_m/batch_size))):
+
+                ################################################################
+                # We have to reshape the data to [batch_size,1,num_attributes] #
+                # and the targets to [batch_size,1,num_targets]                #
+                ################################################################
                 X_te_batch = X_train[i*batch_size:(i+1)*batch_size].reshape(batch_size,1,x_te_n)
                 y_te_batch = y_train[i*batch_size:(i+1)*batch_size].reshape(batch_size,y_te_n)
+                
                 mse, mae = model.train_on_batch(X_te_batch,y_te_batch)
+                
                 te_mse += mse 
                 te_mae += mae
+
                 if i%150 == 0 :
                     print("-"*k +">",end="\r")
                     k += 1
+
+            ##################################################
+            # Make sure to reset the state after each sample #
+            ##################################################
+            
             model.reset_states()
 
             
@@ -489,22 +435,3 @@ if __name__=="__main__":
             print("mae_testing: {}".format(te_mae / x_te_n))
             print("_______________________")
 
-    '''    
-    print('X_test[:10]               : \n{}'.format(X_test[:10]))
-    print('model.predict(X_test)[:10]: \n{})'.format(model.predict(X_test)[:10]))
-    print('y_test[:10]               : \n{}'.format(y_test[:10]))
-    '''
-    '''
-    # feature extraction
-        else:
-        extract = LSTM(30, activation="relu",dropout=0.5,return_sequences=True)(visible)
-        extract = LSTM(20, activation="relu",dropout=0.5,return_sequences=True)(extract)
-        extract = LSTM(10, activation="relu",dropout=0.5,return_sequences=True)(extract)
-        extract = LSTM(5, activation="relu",dropout=0.5,return_sequences=True)(extract)
-        class11 = LSTM(3,activation=None)(extract)
-        output1 = Dense(3, activation='linear')(class11)
-        model = Model(inputs=visible, outputs=output1)
-
-    if PROGRAMMATIC: 
-
-    '''
