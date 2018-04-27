@@ -1,43 +1,18 @@
-x#!/bin/bash
+#!/bin/bash
 
-for s in 128 512 1024
+for i1 in .8 .6 .4 .2
 do
-  for i in .2 .15 .1
-  do
-      for j in .8 .7 .6 .5 .4 .3 .2 .1
-      do
-  	for k in 1 2 3 4 5
-  	do
-  	    python LSTM.py -n $s $s -d $i $i -v relu relu -r $j $j -f Data/Clean/* -e 50 -g -b 100 -R $k
-  	done
-      done
-  done
-  for j in .4 .3 .2 .1
-  do
-      for k in 1 2 3 4 5
-      do
-  	     python LSTM.py -n $s $s -d $i $i -v relu relu -r $j $j -f Data/Clean/* -e 50 -g -b 100 -R $k
-      done
-  done
-done
-
-for s in 128 512 1024
-do
-  for i in .2 .15 .1
-  do
-      for j in .8 .7 .6 .5 .4 .3 .2 .1
-      do
-  	for k in 1 2 3 4 5
-  	do
-  	    python LSTM.py -n $s $s $s -d $i $i $i -v relu relu relu -r $j $j $j -f Data/Clean/* -e 50 -g -b 100 -R $k
-  	done
-      done
-  done
-  for j in .4 .3 .2 .1
-  do
-      for k in 1 2 3 4 5
-      do
-  	     python LSTM.py -n $s $s $s -d $i $i $i -v relu relu relu -r $j $j $j -f Data/Clean/* -e 50 -g -b 100 -R $k
-      done
-  done
+    for i2 in .7 .5 .3 .1
+    do
+	for j1 in .8 .6 .4 .2
+	do
+	    for j2 in .7 .5 .3 .1
+	    do
+		for k in 1 2 3 4 5
+		do
+		    python LSTM.py -n 512 512 -d $i1 $i2 -v relu relu -r $j1 $j2 -f Data/NewClean/* -g -b 500 -R $k
+		done
+	    done
+	done
+    done
 done
