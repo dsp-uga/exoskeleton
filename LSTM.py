@@ -11,8 +11,8 @@ import tensorflow as tf
 
 import matplotlib.pyplot as plt
 import math
-
 import argparse
+import random
 
 from keras.optimizers import SGD
 from keras.models import Sequential, Model
@@ -27,23 +27,7 @@ import os
 import sys
 
 DEBUG = False
-
-###########################################################################
-#                               R2Callback                                #
-# A callback to give us the r-squared value for our models predictions    #
-# during training.                                                        #
-###########################################################################
-
-class R2Callback(Callback):
-    def __init__(self, test_data):
-        self.test_data = test_data
-
-    def on_epoch_end(self, epoch, logs={}):
-        X_test, y_test = self.test_data
-        pred = self.model.predict(X_test)
-        r2 = r2_score(pred,y_test)
-        print('r2 score: {},\n'.format(r2))
-
+DEBUGG = False
 ######################################################################################
 #                             makeRNN()                                              #
 # Creates an RNN model.                                                              #
@@ -157,9 +141,15 @@ def makeRNN(num_attributes,
 ######################################################################################
 
 def testTrainSplit(X,y,batch_size):
-    batches = np.floor(data.shape[0]/batch_size)
+    batches = np.floor(X.shape[0]/batch_size)
     split = int(np.floor(batches * (1/2))) * int(batch_size)
     last = int(batches) * int(batch_size)
+    trainX,trainY,testX,testY = X[:split],y[:split:],X[split:last,:],y[split:last,:]
+    if DEBUGG :
+        print('test_train_split')
+        print('X.shape: {},y.shape: {}'.format(X.shape,y.shape))
+        print('batches: {}, split: {}, last: {}, batch_size: {}'.format(batches,split,last,batch_size))
+        print('trainX.shape: {},trainY.shape: {},testX.shape: {},testY.shape: {}'.format(trainX.shape,trainY.shape,testX.shape,testY.shape))
     return X[:split,:],y[:split,:],X[split:last,:],y[split:last,:]
 
 ######################################################################################
@@ -170,45 +160,67 @@ def testTrainSplit(X,y,batch_size):
 #     debug : a debug flag.                                                          #
 ######################################################################################
 
-def getData(files,debug,scaler):
+#def getData(files,debug,scaler):
+def getData(files,debug,scaler,batch_size):    
 
+    train = []
+    test  = []
     data    = np.empty((0,num_attributes)) #initializing empty array with proper shape
-    #targets = np.empty((0,num_targets   )) #empty array for targets
     batches = np.array([])
 
     for f in files:
 
         #grab the relative pathname and we can save the data for later.
         relative_path = f[f.rfind('/')+1:]
-        dat = np.loadtxt(f,delimiter = ',')
+        dat = np.loadtxt(f,delimiter = ',')[:,:-1]
         data = np.append(data,dat,axis=0)
 
         batch = dat.shape[0]
 
-        if debug :
-            print("full_data.shape: {}".format(full_data.shape))
-            print("processed_data.shape: {}".format(processed_data.shape))
-            print("processed_target.shape: {}".format(processed_targets.shape))
-
         batches = np.append(batches,[batch])
 
+        if DEBUGG :
+            print('f: {}'.format(f))
+            print("dat.shape: {}, batch: ".format(dat.shape,batch))
+            print('batches: {}'.format(batches))
+            print('data.shape:{}'.format(data.shape))
     ###########################################################
     # The first three columns are targets, the rest features, #
     # and we're predicting the difference in each feature     #
     # from one time point to the next.                        #
     ###########################################################
 
-    print(data.shape)
+    print('from getData(), data.shape: {}'.format(data.shape))
     data = scaler.fit_transform(data)
     
-    X = data[:-1,:]
-    y = data[1:,:3]-data[:-1,:3]
-    
-    if debug :
-        print("data[0:10]: \n{}".format(data[0:10]))
-        print("targets[0:10]: \n{}".format(targets[0:10]))
-        print("batches: \n{}".format(batches))
-    return X,y,batches
+    #X = data[:-1,:]
+    #y = data[1:,:3]-data[:-1,:3]
+
+
+    j = 0 
+    for i,batch in enumerate(batches) :
+        dat = data[j:j+int(batch),:]
+        X,y = dat[:-1,:],dat[1:,:3]-dat[:-1,:3]
+
+        if DEBUGG :
+            print('before testTrainSplit')
+            print('j: {}, batch: {}'.format(j,batch))
+            print('dat.shape: {}'.format(dat.shape))
+            
+
+        trainX,trainY,testX,testY = testTrainSplit(X,y,batch_size)
+
+        if DEBUGG :
+            print('after testTrainSplit')
+            print('trainX.shape: {}, trainY.shape: {}, testX.shape: {},testY.shape: {}'.format(trainX.shape,trainY.shape,testX.shape,testY.shape))
+        train += [(trainX,trainY)]
+        test  += [(testX,testY)]
+        j += int(batch)
+            
+    #return X,y,batches
+    random.shuffle(train)
+    random.shuffle(test)
+    return train,test
 
 ######################################################################################
 #                              Make some constants                                   #
@@ -217,8 +229,8 @@ def getData(files,debug,scaler):
 
 TRAIN_LOSS = 0
 TEST_LOSS  = 1
-R2         = 2
-
+TRAIN_R2   = 2
+TEST_R2    = 3
 #########################################################################################################
 #                                    Evaluate Model                                                     #
 # Use the stats across training epochs (best_stats) and the stats across samples for this epoch         #
@@ -226,21 +238,23 @@ R2         = 2
 # If so, save the model, update the best_stats, and return the update flag.                             #
 #########################################################################################################
 
-def evaluate_model(model,best_stats,overall_stats,model_name):
+def evaluate_model(model,best_stats,epoch_stats,model_name):
     if DEBUG :
         print('from evaluate model...')
-        print("best_stats: \n{}\noverall_stats: \n{}\n".format(best_stats,overall_stats))
+        print("best_stats: \n{}\nepoch_stats: \n{}\n".format(best_stats,epoch_stats))
     updated = False
-    for stat_place in [TRAIN_LOSS,TEST_LOSS,R2]:
-        diff = best_stats[stat_place] - overall_stats[stat_place]
-        if diff > .001 :
+    diff = np.array(best_stats) - np.array(epoch_stats)
+    for stat_place in [TRAIN_LOSS,TEST_LOSS,TRAIN_R2,TEST_R2]:
+        new_best_loss = stat_place in [TRAIN_LOSS,TEST_LOSS] and diff[stat_place] > .001
+        new_best_acc  = stat_place in [TRAIN_R2  ,TEST_R2  ] and .001 > diff[stat_place] 
+        if new_best_loss or new_best_acc :
             updated = True
             if save_mode : model.save("../data/DMproject/Models/{}/{}.hf".format(model_name,stat_place))
             print("best: {}, new: {}, diff: {}".format(best_stats   [stat_place],
-                                                       overall_stats[stat_place],
+                                                       epoch_stats[stat_place],
                                                        diff))
-            best_stats[stat_place] = overall_stats[stat_place]
-            print("Saving a good training loss model: {}".format(overall_stats[stat_place]))
+            best_stats[stat_place] = epoch_stats[stat_place]
+            print("Saving a {} model: {}".format(stat_place,epoch_stats[stat_place]))
     if DEBUG :
         print('from evaluate, best_stats: \n{}'.format(best_stats))
     return updated
@@ -373,8 +387,11 @@ if __name__=="__main__":
     #              Get the data                  #
     ##############################################
     print("Collecting and pre-processing data...")
-    data,targets,samples = getData(files,debug,scaler)
-    num_samples = len(samples)
+    #data,targets,samples = getData(files,debug,scaler)
+    train,test = getData(files,debug,scaler,batch_size)
+    #num_samples = len(samples)
+    num_training_samples = len(train)
+    num_testing_samples  = len(test)
     print("Done.")
     print("Specifying the model...")
 
@@ -405,9 +422,238 @@ if __name__=="__main__":
 
     epochs_without_update = 0
     converged = False
-    best_stats = [1000000] * 3
-    stats_list = [np.array([])] * 3
+    best_stats = [1000000,1000000,-1000000,-1000000]
+    stats_list = [np.array([])] * 4
 
+    #########################################################################
+    #                       Train the Model                                 #
+    #                                                                       #
+    # Training by hand is a little ugly.                                    #
+    # We run each epoch separately, and inside of it we'll run the data     #
+    # through the model on a forward pass in batches.                       #
+    # We'll reset the state of the net on each new sample.                  #
+    #########################################################################
+    epoch = 0
+    while not converged:
+
+        epoch += 1
+        ##################################################################################
+        # We'll collect our predictions on each batch and use them to calculate an TEST_R2    #
+        # score for each epoch. We'll also need to collect the y_true values for batches #
+        ##################################################################################
+        train_y_pred = np.array([]*3).reshape(0,3)
+        train_y_true  = np.array([]*3).reshape(0,3)
+        
+        test_y_pred = np.array([]*3).reshape(0,3)
+        test_y_true  = np.array([]*3).reshape(0,3)
+        
+        ##################################################################################
+        # We'll use epoch_stats to aggregate our results for this epoch across samples   #
+        ##################################################################################
+        epoch_stats = [0]*4
+        print("training epoch {}...".format(epoch))
+
+        ##############################################################
+        # Train the model one sample at a time, resetting the model  #
+        # state after each sample.                                   #
+        ##############################################################
+        for sample in train:
+            X_train,y_train = sample
+
+            ##############################################################################
+            # We'll use train_loss to aggregate our results for this particular sample    #
+            ##############################################################################
+            train_loss = 0
+            print("training on a new sample...")
+
+            ##############################################################################
+            # We'll want these feature shapes for lining up arrays later.                #
+            ##############################################################################
+            training_time_steps, num_features = X_train.shape
+            num_targets  = y_train.shape[1]
+            
+            ##############################
+            # This is for a progress bar #
+            ##############################
+            k = 1
+
+            #######################################################################
+            # now we train the model on this sample, one batch at a time...       #
+            # time_steps/batch_size gives us the number of batches in this sample #
+            #######################################################################
+            num_training_batches = int(training_time_steps / batch_size)
+            if DEBUGG : print("num_trainig_batches: {}".format(num_training_batches))
+
+            for i in range(int(num_training_batches)):
+
+                ################################################################
+                # We have to reshape the data to [batch_size,1,num_attributes] #
+                # and the targets to [batch_size,num_targets]                #
+                ################################################################
+                X_tr_batch = X_train[i*batch_size:(i+1)*batch_size].reshape(batch_size,1,num_features)
+                y_tr_batch = y_train[i*batch_size:(i+1)*batch_size].reshape(batch_size,num_targets)
+
+                mse = model.train_on_batch(X_tr_batch,y_tr_batch)
+                train_loss += mse
+
+                #Print the progress bar.
+                if i%150 == 0 :
+                    print("-"*k +">",end="\r")
+                    k += 1
+
+                if DEBUGG :
+                    print("for this batch, mse: {}".format(mse))
+                    print('after training on batch, test_loss: {}'.format(train_loss))
+            print("\n")
+            
+            ##############################################################################################
+            # Average out the test loss for this testing sample and add it to the epoch stats            #
+            ##############################################################################################
+            sample_train_loss = train_loss / num_training_batches
+            epoch_stats[TRAIN_LOSS] += sample_train_loss 
+            if DEBUGG :
+                print('after most recent training sample, epoch_stats[TRAIN_LOSS]: {}'.format(epoch_stats[TRAIN_LOSS]))
+                
+            ##############################################################################################
+            # Make sure to reset the state and update the epoch_stats after each training sample.        #
+            # NOTE : Our metrics are each averaged across every time point in the batch, so we want to   #
+            #        make sure that our sample stats are each averaged across the training batches also. #
+            ##############################################################################################
+            model.reset_states()
+
+        
+        ##############################################################
+        # Test the model one sample at a time, resetting the model  #
+        # state after each sample.                                   #
+        ##############################################################
+        for sample in test:
+            X_test,y_test = sample
+            
+            ##############################################################################
+            # We'll use test_loss to aggregate our results for this particular sample #
+            ##############################################################################
+            test_loss = 0
+            print("testing on a new sample...")
+
+            ##############################################################################
+            # We need these feature shapes for lining up batches and other nparrays.     #
+            ##############################################################################
+            testing_time_steps, num_features = X_test.shape
+            num_targets  = y_test.shape[1]
+
+            if DEBUGG :
+                print('testing_time_steps: {}, num_features: {}, num_targets: {}'.format(testing_time_steps,num_features,num_targets))
+            ##############################
+            # This is for a progress bar #
+            ##############################
+            k = 1
+
+            #######################################################################
+            # now we test the model on this sample, one batch at a time...       #
+            # time_steps/batch_size gives us the number of batches in this sample #
+            #######################################################################
+            num_testing_batches = int(testing_time_steps / batch_size)
+            if DEBUG : print("num_testig_batches: {}".format(num_testing_batches))
+
+            for i in range(int(num_testing_batches)):
+
+                ################################################################
+                # We have to reshape the data to [batch_size,1,num_attributes] #
+                # and the targets to [batch_size,1,num_targets]                #
+                ################################################################
+                X_te_batch = X_test[i*batch_size:(i+1)*batch_size].reshape(batch_size,1,num_features)
+                y_te_batch = y_test[i*batch_size:(i+1)*batch_size].reshape(batch_size,num_targets)
+
+                mse = model.test_on_batch(X_te_batch,y_te_batch)
+                test_loss += mse
+
+                #Print the progress bar.
+                if i%150 == 0 :
+                    print("-"*k +">",end="\r")
+                    k += 1
+            print("\n")
+
+            ##############################################################################################
+            # Make sure to reset the state and update the epoch_stats after each training sample.        #
+            # NOTE : Our metrics are each averaged across every time point in the batch, so we want to   #
+            #        make sure that our sample stats are each averaged across the training batches also. #
+            ##############################################################################################
+            model.reset_states()
+            ##############################################################################################
+            # Average out the test loss for this testing sample and add it to the epoch stats            #
+            ##############################################################################################
+            sample_test_loss = test_loss / num_testing_batches
+            epoch_stats[TEST_LOSS] += sample_test_loss 
+            if DEBUGG :
+                print('after most recent training sample, epoch_stats[TEST_LOSS]: {}'.format(epoch_stats[TEST_LOSS]))
+
+
+        ##############################################################
+        # Make some predictions                                      #
+        ##############################################################
+
+        for training_sample in train:
+
+            X_train,y_train = sample
+            
+            training_time_steps, num_features = X_train.shape
+            num_targets  = y_train.shape[1]
+            num_training_batches = int(training_time_steps / batch_size)
+
+            pred = model.predict_on_batch(X_te_batch)
+            pred.reshape(batch_size,num_targets)
+            
+            train_y_pred = np.append(train_y_pred,pred      ,axis=0)
+            train_y_true = np.append(train_y_true,y_te_batch,axis=0)
+            
+        for testing_sample in test:
+            
+            X_test,y_test = sample
+            
+            testing_time_steps, num_features = X_test.shape
+            num_targets  = y_test.shape[1]
+            num_testing_batches = int(testing_time_steps / batch_size)
+
+            pred = model.predict_on_batch(X_te_batch)
+            pred.reshape(batch_size,num_targets)
+            
+            test_y_pred = np.append(test_y_pred,pred      ,axis=0)
+            test_y_true = np.append(test_y_true,y_te_batch,axis=0)
+            
+        ##########################################################################################
+        # Collect and aggregate the stats for the epoch                                          #
+        # Note: The stats were calculated as an average for each sample, so we want to make sure #
+        #       that the stats for the epoch are an average across the samples as well.          #
+        ##########################################################################################
+        
+        test_r2  = r2_score(test_y_true ,test_y_pred)
+        train_r2 = r2_score(train_y_true,train_y_pred)
+        
+        epoch_stats[TRAIN_LOSS] /= num_training_samples 
+        epoch_stats[TEST_LOSS]  /= num_testing_samples
+        epoch_stats[TRAIN_R2] = train_r2
+        epoch_stats[TEST_R2]  = test_r2
+        
+        if DEBUGG :
+            for stat_place in [TRAIN_LOSS,TEST_LOSS,TRAIN_R2,TEST_R2]:
+                print('after averaging batch results, stat_place: {}, epoch_stats[stat_place]: {}'.format(stat_place,epoch_stats[stat_place]))
+
+        if DEBUGG :
+            print('before updating: stats_list: \n{}\nepoch stats: \n{}'.format(stats_list,epoch_stats))
+        for stat_place in [TRAIN_LOSS,TEST_LOSS,TRAIN_R2,TEST_R2]:
+            stats_list[stat_place] = np.append(stats_list[stat_place],[epoch_stats[stat_place]])
+        if DEBUGG :
+            print('after updating: stats_list: \n{}\nepoch stats: \n{}'.format(stats_list,epoch_stats))
+
+        updated = evaluate_model(model,best_stats,epoch_stats,model_name)
+
+        if not updated :
+            epochs_without_update += 1
+        else :
+            epochs_without_update = 0
+        if epochs_without_update == 10 : converged = True
+    
+    '''
     #########################################################################
     #                       Train the Model                                 #
     #                                                                       #
@@ -445,8 +691,8 @@ if __name__=="__main__":
             ##############################################################################
             sample_stats = [0]*3
             print("training on a new sample...")
-            if debug :
-                print("samle_size:".format(sample_size))
+            if DEBUGG :
+                print("samle_size: {}".format(sample_size))
 
             #####################################
             # Get the data for this sample      #
@@ -454,7 +700,7 @@ if __name__=="__main__":
             X = data[j:j+int(sample_size),:]
             y = targets[j:j+int(sample_size),:]
 
-            if debug :
+            if DEBUG :
                 print("X.shape: {}".format(X.shape))
                 print("y.shape: {}".format(y.shape))
 
@@ -503,8 +749,8 @@ if __name__=="__main__":
                     print("-"*k +">",end="\r")
                     k += 1
 
-                if DEBUG :
-                    print("for this sample, mse: {}".format(mse))
+                if DEBUGG :
+                    print("for this batch, mse: {}".format(mse))
                     for stat_place in [TRAIN_LOSS,TEST_LOSS]:
                         print('after training on batch, stat_place: {}, sample_stats[stat_place]: {}'.format(stat_place,sample_stats[stat_place]))
             print("\n")
@@ -515,12 +761,7 @@ if __name__=="__main__":
             #        make sure that our sample stats are each averaged across the training batches also. #
             ##############################################################################################
             model.reset_states()
-            
-            epoch_stats[TRAIN_LOSS] += sample_stats[TRAIN_LOSS]/num_training_batches
 
-            if DEBUG :
-                    for stat_place in [TRAIN_LOSS,TEST_LOSS]:
-                        print('after averaging batch results, stat_place: {}, sample_stats[stat_place]: {}'.format(stat_place,epoch_stats[stat_place]))
             #Reset k for an accurate progress bar. 
             k=1
 
@@ -532,6 +773,8 @@ if __name__=="__main__":
             # x_te_m/batch_size gives us the number of batches in this sample #
             ###################################################################
             num_testing_batches = int(testing_time_steps/batch_size)
+            if DEBUG :
+                print('testing_time_steps: {}'.format(testing_time_steps))
             for i in range(num_testing_batches):
 
                 ################################################################
@@ -555,8 +798,8 @@ if __name__=="__main__":
                     print("-"*k +">",end="\r")
                     k += 1
 
-                if DEBUG :
-                    print("for this sample, mse: {}".format(mse))
+                if DEBUGG :
+                    print("for this batch, mse: {}".format(mse))
                     for stat_place in [TRAIN_LOSS,TEST_LOSS]:
                         print('after training on batch, stat_place: {}, sample_stats[stat_place]: {}'.format(stat_place,sample_stats[stat_place]))
             ##############################################################################################
@@ -572,10 +815,11 @@ if __name__=="__main__":
             
             epoch_stats[TEST_LOSS] += sample_stats[TEST_LOSS] / num_testing_batches
             epoch_stats[R2] = r2
-
-            if DEBUG :
-                for stat_place in [TRAIN_LOSS,R2,TEST_LOSS]:
-                    print('after averaging batch results, stat_place: {}, sample_stats[stat_place]: {}'.format(stat_place,epoch_stats[stat_place]))
+            epoch_stats[TRAIN_LOSS] += sample_stats[TRAIN_LOSS]/num_training_batches
+        
+            if DEBUGG :
+                for stat_place in [TRAIN_LOSS,TEST_LOSS,R2]:
+                    print('after averaging batch results, stat_place: {}, epoch_stats[stat_place]: {}'.format(stat_place,epoch_stats[stat_place]))
 
         ##########################################################################################
         # Collect and aggregate the stats for the epoch                                          #
@@ -583,11 +827,16 @@ if __name__=="__main__":
         #       that the stats for the epoch are an average across the samples as well.          #
         ##########################################################################################
 
+        if DEBUGG : print('num_sample: {}'.format(num_samples))
         for stat in [TRAIN_LOSS, TEST_LOSS]:
             epoch_stats[stat] /= num_samples
 
+        if DEBUGG :
+            print('before updating: stats_list: \n{}\nepoch stats: \n{}'.format(stats_list,epoch_stats))
         for stat_place in [TRAIN_LOSS,TEST_LOSS,R2]:
             stats_list[stat_place] = np.append(stats_list[stat_place],[epoch_stats[stat_place]])
+        if DEBUGG :
+            print('after updating: stats_list: \n{}\nepoch stats: \n{}'.format(stats_list,epoch_stats))
 
         updated = evaluate_model(model,best_stats,epoch_stats,model_name)
 
@@ -596,10 +845,11 @@ if __name__=="__main__":
         else :
             epochs_without_update = 0
         if epochs_without_update == 10 : converged = True
-
+    '''
     stats_list         = np.array(stats_list)
     print('stats_list.shape: {}'.format(stats_list.shape))
     summary_data       = stats_list.T
-    summary_data_frame = pd.DataFrame(summary_data,columns=['tr_mse','te_mse','r2'])
+    summary_data_frame = pd.DataFrame(summary_data,columns=['tr_mse','te_mse','r2_train','r2_test'])
 
+    print(summary_data_frame)
     if save_mode: summary_data_frame.to_csv("../data/DMproject/Results/{}/{}.csv".format(model_name,repeat),index=False)
