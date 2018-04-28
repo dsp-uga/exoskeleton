@@ -190,15 +190,18 @@ print(np.count_nonzero(targets_mask))
 
 
 
-######################################################################################
+#####################################################################################
 #                            generate Unet Model                                    #
 # Produces a unet model depending on the optimizer function                         #
 # Parameters:                                                                       #
 #     optimizer : the optimizer that needs to be selected                           #
 #     width: the width parameter to be selected                                     #
 #     height: the height of slice to be selected                                    #
+#https://www.kaggle.com/keegil/keras-u-net-starter-lb-0-277?scriptVersionId=2164855 #
+#Copied the basic unet structure , used our own filter depth and additionally       #
+#modified UNET structure to add two output branches  and two loss function          #
 #####################################################################################
-#https://www.kaggle.com/keegil/keras-u-net-starter-lb-0-277?scriptVersionId=2164855
+
 def get_unet(optimizer="adagrad",width=8,height=8):
     # Build U-Net model
     inputs = Input((width, height, 1))
