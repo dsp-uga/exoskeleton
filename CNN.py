@@ -1,8 +1,9 @@
 ###########################################################################                                                                         #
 # Responsible for pre-processing sensor data and building, training, &    #
-# evaluating the model.                                                   #
+# evaluating the model. Preprocessing code has been taken from            #
+#LSTM                                                					  #
 #                                                                         #
-# required input:                                                         #
+#                                                   					  #
 ###########################################################################
 
 import pandas as pd
@@ -198,7 +199,7 @@ print(np.count_nonzero(targets_mask))
 #     width: the width parameter to be selected                                     #
 #     height: the height of slice to be selected                                    #
 #####################################################################################
-
+#https://www.kaggle.com/keegil/keras-u-net-starter-lb-0-277?scriptVersionId=2164855
 def get_unet(optimizer="adagrad",width=8,height=8):
     # Build U-Net model
     inputs = Input((width, height, 1))
