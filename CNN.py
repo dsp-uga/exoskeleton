@@ -1,9 +1,8 @@
 ###########################################################################                                                                         #
 # Responsible for pre-processing sensor data and building, training, &    #
-# evaluating the model. Preprocessing code has been taken from            #
-#LSTM                                                					  #
+# evaluating the model. Preprocessing code has been taken from LSTM       # 
 #                                                                         #
-#                                                   					  #
+#                                                                         #
 ###########################################################################
 
 import pandas as pd
